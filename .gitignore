@@ -20,6 +20,11 @@ env/
 *.swp
 *.swo
 
+# Environment variables
+.env
+.env.local
+.env.*.local
+
 # KnowSQL specific
 schema_index/
 *.db
