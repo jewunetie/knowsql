@@ -1,11 +1,61 @@
 """Shared test fixtures for KnowSQL test suite."""
 
 import json
+import os
 import sqlite3
 
 import pytest
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from knowsql.llm.provider import LLMProvider, LLMMessage
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--llm-backend",
+        choices=["mock", "openai", "anthropic"],
+        default="mock",
+        help="LLM backend for provider tests: mock (default), openai, or anthropic",
+    )
+
+
+def pytest_configure(config):
+    backend = config.getoption("--llm-backend", default="mock")
+    required_keys = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
+    if backend in required_keys:
+        env_var = required_keys[backend]
+        if not os.environ.get(env_var):
+            raise pytest.UsageError(
+                f"--llm-backend={backend} requires {env_var} to be set"
+            )
+
+
+@pytest.fixture(scope="session")
+def llm_backend(request):
+    """Return the selected LLM backend string."""
+    return request.config.getoption("--llm-backend")
+
+
+@pytest.fixture(scope="module")
+def openai_live_provider(llm_backend):
+    """Real OpenAI provider when --llm-backend=openai, else None."""
+    if llm_backend != "openai":
+        return None
+    from knowsql.llm.openai_provider import OpenAIProvider
+    return OpenAIProvider(api_key=os.environ["OPENAI_API_KEY"], model="gpt-5-mini")
+
+
+@pytest.fixture(scope="module")
+def anthropic_live_provider(llm_backend):
+    """Real Anthropic provider when --llm-backend=anthropic, else None."""
+    if llm_backend != "anthropic":
+        return None
+    from knowsql.llm.anthropic_provider import AnthropicProvider
+    return AnthropicProvider(
+        api_key=os.environ["ANTHROPIC_API_KEY"], model="claude-sonnet-4-20250514"
+    )
 
 
 class MockLLMProvider(LLMProvider):
@@ -15,7 +65,7 @@ class MockLLMProvider(LLMProvider):
         self.responses = list(responses)
         self.calls = []  # list of (method, messages, kwargs)
 
-    def complete(self, messages, tools=None, temperature=0.0):
+    def complete(self, messages, tools=None, temperature=None):
         self.calls.append(("complete", messages, {"tools": tools}))
         resp = self.responses.pop(0)
         if isinstance(resp, LLMMessage):
@@ -23,7 +73,7 @@ class MockLLMProvider(LLMProvider):
         # Allow passing raw string as shorthand
         return LLMMessage(role="assistant", content=str(resp))
 
-    def complete_json(self, messages, temperature=0.0):
+    def complete_json(self, messages, temperature=None):
         self.calls.append(("complete_json", messages, {}))
         return self.responses.pop(0)
 

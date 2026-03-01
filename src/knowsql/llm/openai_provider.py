@@ -16,14 +16,15 @@ class OpenAIProvider(LLMProvider):
         self._openai = openai
         self.client = openai.OpenAI(api_key=api_key)
 
-    def complete(self, messages, tools=None, temperature=0.0):
+    def complete(self, messages, tools=None, temperature=None):
         api_messages = self._prepare_messages(messages)
 
         kwargs = {
             "model": self.model,
-            "temperature": temperature,
             "messages": api_messages,
         }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         if tools:
             kwargs["tools"] = [self._convert_tool(t) for t in tools]
 
@@ -42,16 +43,19 @@ class OpenAIProvider(LLMProvider):
 
         return self._parse_response(response)
 
-    def complete_json(self, messages, temperature=0.0):
+    def complete_json(self, messages, temperature=None):
         api_messages = self._prepare_messages(messages)
 
+        kwargs = {
+            "model": self.model,
+            "messages": api_messages,
+            "response_format": {"type": "json_object"},
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                temperature=temperature,
-                messages=api_messages,
-                response_format={"type": "json_object"},
-            )
+            response = self.client.chat.completions.create(**kwargs)
         except self._openai.AuthenticationError as e:
             raise LLMAuthError(f"OpenAI authentication failed: {e}")
         except self._openai.RateLimitError as e:

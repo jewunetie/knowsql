@@ -85,7 +85,7 @@ def test_cli_provider_openai_sets_api_key_env(tmp_path, monkeypatch):
 def test_cli_provider_openai_sets_default_model(tmp_path, monkeypatch):
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     config = load_config(provider="openai")
-    assert config.llm.model == "gpt-4o"
+    assert config.llm.model == "gpt-5-mini"
 
 
 def test_resolution_order(tmp_path, monkeypatch):

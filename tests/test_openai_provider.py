@@ -118,3 +118,131 @@ class TestCompleteJson:
         # None content defaults to "{}" which parses to empty dict
         result = provider.complete_json([LLMMessage(role="user", content="Return JSON")])
         assert result == {}
+
+
+@pytest.mark.live_llm
+class TestCompleteTextLive:
+    """Tests that run against mock or real OpenAI API."""
+
+    @pytest.fixture
+    def active_provider(self, provider, openai_live_provider, llm_backend, monkeypatch):
+        if llm_backend == "openai":
+            return openai_live_provider
+        mock_resp = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(
+                content="Hello", tool_calls=None
+            ))]
+        )
+        monkeypatch.setattr(provider.client.chat.completions, "create", lambda **kw: mock_resp)
+        return provider
+
+    def test_text_response(self, active_provider):
+        result = active_provider.complete(
+            [LLMMessage(role="user", content="Reply with one word: hello")],
+        )
+        assert isinstance(result, LLMMessage)
+        assert result.role == "assistant"
+        assert len(result.content) > 0
+
+    def test_system_message(self, active_provider):
+        result = active_provider.complete([
+            LLMMessage(role="system", content="You are a calculator. Only output numbers."),
+            LLMMessage(role="user", content="What is 2+2?"),
+        ])
+        assert isinstance(result, LLMMessage)
+        assert result.role == "assistant"
+        assert len(result.content) > 0
+
+
+@pytest.mark.live_llm
+class TestCompleteJsonLive:
+    @pytest.fixture
+    def active_provider(self, provider, openai_live_provider, llm_backend, monkeypatch):
+        if llm_backend == "openai":
+            return openai_live_provider
+        mock_resp = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(
+                content='{"name": "test", "count": 5}'
+            ))]
+        )
+        monkeypatch.setattr(provider.client.chat.completions, "create", lambda **kw: mock_resp)
+        return provider
+
+    def test_json_response(self, active_provider):
+        result = active_provider.complete_json([
+            LLMMessage(role="user", content='Return JSON with keys "name" (string) and "count" (integer).'),
+        ])
+        assert isinstance(result, dict)
+        assert "name" in result
+        assert "count" in result
+
+
+@pytest.mark.live_llm
+class TestToolCallingLive:
+    WEATHER_TOOL = ToolDefinition(
+        name="get_weather",
+        description="Get the current weather for a city.",
+        parameters={
+            "type": "object",
+            "properties": {"city": {"type": "string", "description": "City name"}},
+            "required": ["city"],
+        },
+    )
+
+    @pytest.fixture
+    def active_provider(self, provider, openai_live_provider, llm_backend, monkeypatch):
+        if llm_backend == "openai":
+            return openai_live_provider
+        tc = SimpleNamespace(
+            id="tc_mock", function=SimpleNamespace(name="get_weather", arguments='{"city": "Paris"}')
+        )
+        mock_resp = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tc]))]
+        )
+        monkeypatch.setattr(provider.client.chat.completions, "create", lambda **kw: mock_resp)
+        return provider
+
+    def test_tool_call(self, active_provider):
+        result = active_provider.complete(
+            [LLMMessage(role="user", content="What is the weather in Paris?")],
+            tools=[self.WEATHER_TOOL],
+        )
+        assert isinstance(result, LLMMessage)
+        assert result.tool_calls is not None
+        assert len(result.tool_calls) >= 1
+        tc = result.tool_calls[0]
+        assert isinstance(tc, ToolCall)
+        assert tc.name == "get_weather"
+        assert isinstance(tc.arguments, dict)
+        assert "city" in tc.arguments
+
+    def test_tool_round_trip(self, active_provider, llm_backend, monkeypatch, provider):
+        # Step 1: get tool call
+        result1 = active_provider.complete(
+            [LLMMessage(role="user", content="What is the weather in Paris?")],
+            tools=[self.WEATHER_TOOL],
+        )
+        assert result1.tool_calls is not None
+        tc = result1.tool_calls[0]
+
+        # Step 2: provide tool result, get final answer
+        if llm_backend != "openai":
+            mock_resp2 = SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(
+                    content="The weather in Paris is sunny.", tool_calls=None
+                ))]
+            )
+            monkeypatch.setattr(provider.client.chat.completions, "create", lambda **kw: mock_resp2)
+            active = provider
+        else:
+            active = active_provider
+
+        messages = [
+            LLMMessage(role="user", content="What is the weather in Paris?"),
+            result1,
+            LLMMessage(role="tool", content='{"weather": "sunny", "temp": 22}', tool_call_id=tc.id),
+        ]
+        result2 = active.complete(messages, tools=[self.WEATHER_TOOL])
+        assert isinstance(result2, LLMMessage)
+        assert result2.role == "assistant"
+        assert len(result2.content) > 0

@@ -197,3 +197,89 @@ class TestCompleteJson:
         monkeypatch.setattr(provider.client.messages, "create", lambda **kwargs: mock_response)
         result = provider.complete_json([LLMMessage(role="user", content="Return JSON")])
         assert result == {"key": "value"}
+
+
+@pytest.mark.live_llm
+class TestCompleteTextLive:
+    @pytest.fixture
+    def active_provider(self, provider, anthropic_live_provider, llm_backend, monkeypatch):
+        if llm_backend == "anthropic":
+            return anthropic_live_provider
+        mock_resp = SimpleNamespace(content=[SimpleNamespace(type="text", text="Hello")])
+        monkeypatch.setattr(provider.client.messages, "create", lambda **kw: mock_resp)
+        return provider
+
+    def test_text_response(self, active_provider):
+        result = active_provider.complete(
+            [LLMMessage(role="user", content="Reply with one word: hello")],
+        )
+        assert isinstance(result, LLMMessage)
+        assert result.role == "assistant"
+        assert len(result.content) > 0
+
+    def test_system_message(self, active_provider):
+        result = active_provider.complete([
+            LLMMessage(role="system", content="You are a calculator. Only output numbers."),
+            LLMMessage(role="user", content="What is 2+2?"),
+        ])
+        assert isinstance(result, LLMMessage)
+        assert result.role == "assistant"
+        assert len(result.content) > 0
+
+
+@pytest.mark.live_llm
+class TestCompleteJsonLive:
+    @pytest.fixture
+    def active_provider(self, provider, anthropic_live_provider, llm_backend, monkeypatch):
+        if llm_backend == "anthropic":
+            return anthropic_live_provider
+        mock_resp = SimpleNamespace(content=[
+            SimpleNamespace(type="text", text='"name": "test", "count": 5}')
+        ])
+        monkeypatch.setattr(provider.client.messages, "create", lambda **kw: mock_resp)
+        return provider
+
+    def test_json_response(self, active_provider):
+        result = active_provider.complete_json([
+            LLMMessage(role="user", content='Return JSON with keys "name" (string) and "count" (integer).'),
+        ])
+        assert isinstance(result, dict)
+        assert "name" in result
+        assert "count" in result
+
+
+@pytest.mark.live_llm
+class TestToolCallingLive:
+    WEATHER_TOOL = ToolDefinition(
+        name="get_weather",
+        description="Get the current weather for a city.",
+        parameters={
+            "type": "object",
+            "properties": {"city": {"type": "string", "description": "City name"}},
+            "required": ["city"],
+        },
+    )
+
+    @pytest.fixture
+    def active_provider(self, provider, anthropic_live_provider, llm_backend, monkeypatch):
+        if llm_backend == "anthropic":
+            return anthropic_live_provider
+        mock_resp = SimpleNamespace(content=[
+            SimpleNamespace(type="tool_use", id="tc_mock", name="get_weather", input={"city": "Paris"})
+        ])
+        monkeypatch.setattr(provider.client.messages, "create", lambda **kw: mock_resp)
+        return provider
+
+    def test_tool_call(self, active_provider):
+        result = active_provider.complete(
+            [LLMMessage(role="user", content="What is the weather in Paris?")],
+            tools=[self.WEATHER_TOOL],
+        )
+        assert isinstance(result, LLMMessage)
+        assert result.tool_calls is not None
+        assert len(result.tool_calls) >= 1
+        tc = result.tool_calls[0]
+        assert isinstance(tc, ToolCall)
+        assert tc.name == "get_weather"
+        assert isinstance(tc.arguments, dict)
+        assert "city" in tc.arguments

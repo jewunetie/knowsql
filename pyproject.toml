@@ -14,6 +14,7 @@ dependencies = [
     "anthropic>=0.40.0",
     "openai>=1.0",
     "pyyaml>=6.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,11 @@ test = ["pytest>=8.0", "pytest-mock>=3.12"]
 
 [project.scripts]
 knowsql = "knowsql.cli:cli"
+
+[tool.pytest.ini_options]
+markers = [
+    "live_llm: tests that can run against real LLM APIs (via --llm-backend)",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/knowsql"]

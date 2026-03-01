@@ -51,6 +51,9 @@ def load_config(
 ) -> KnowSQLConfig:
     """Load config with resolution: defaults -> YAML -> env vars -> CLI flags."""
     import os
+    from dotenv import load_dotenv
+
+    load_dotenv()
 
     config = KnowSQLConfig()
 
@@ -107,7 +110,7 @@ def load_config(
         if provider == "openai":
             config.llm.api_key_env = "OPENAI_API_KEY"
             if not model:
-                config.llm.model = "gpt-4o"
+                config.llm.model = "gpt-5-mini"
     if model:
         config.llm.model = model
     if output_dir:

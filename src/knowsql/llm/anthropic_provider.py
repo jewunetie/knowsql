@@ -16,15 +16,16 @@ class AnthropicProvider(LLMProvider):
         self._anthropic = anthropic
         self.client = anthropic.Anthropic(api_key=api_key)
 
-    def complete(self, messages, tools=None, temperature=0.0):
+    def complete(self, messages, tools=None, temperature=None):
         api_messages, system = self._prepare_messages(messages)
 
         kwargs = {
             "model": self.model,
             "max_tokens": 4096,
-            "temperature": temperature,
             "messages": api_messages,
         }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         if system:
             kwargs["system"] = system
         if tools:
@@ -45,19 +46,22 @@ class AnthropicProvider(LLMProvider):
 
         return self._parse_response(response)
 
-    def complete_json(self, messages, temperature=0.0):
+    def complete_json(self, messages, temperature=None):
         # Use assistant prefill with { to encourage JSON
         api_messages, system = self._prepare_messages(messages)
         api_messages.append({"role": "assistant", "content": "{"})
 
+        kwargs = {
+            "model": self.model,
+            "max_tokens": 4096,
+            "messages": api_messages,
+            "system": system or "",
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=4096,
-                temperature=temperature,
-                messages=api_messages,
-                system=system or "",
-            )
+            response = self.client.messages.create(**kwargs)
         except self._anthropic.AuthenticationError as e:
             raise LLMAuthError(f"Anthropic authentication failed: {e}")
         except self._anthropic.RateLimitError as e:

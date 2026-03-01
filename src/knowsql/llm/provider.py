@@ -32,7 +32,7 @@ class LLMProvider(ABC):
         self,
         messages: list[LLMMessage],
         tools: list[ToolDefinition] | None = None,
-        temperature: float = 0.0,
+        temperature: float | None = None,
     ) -> LLMMessage:
         """Send a completion request and return the response."""
         pass
@@ -41,7 +41,7 @@ class LLMProvider(ABC):
     def complete_json(
         self,
         messages: list[LLMMessage],
-        temperature: float = 0.0,
+        temperature: float | None = None,
     ) -> dict:
         """Send a completion request expecting a JSON response."""
         pass
