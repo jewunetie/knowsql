@@ -5,13 +5,24 @@ from pathlib import Path
 
 import yaml
 
+_PROVIDER_KEY_ENV: dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+}
+
 
 @dataclass
 class LLMConfig:
     provider: str = "anthropic"
     model: str = "claude-sonnet-4-20250514"
-    api_key_env: str = "ANTHROPIC_API_KEY"
+    api_key_env: str | None = None
     api_key: str | None = None
+
+    def __post_init__(self):
+        if self.api_key_env is None:
+            self.api_key_env = _PROVIDER_KEY_ENV.get(
+                self.provider, f"{self.provider.upper()}_API_KEY"
+            )
 
 
 @dataclass

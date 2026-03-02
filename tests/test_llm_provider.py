@@ -27,7 +27,7 @@ def test_tool_definition_dataclass():
 
 
 def test_create_provider_missing_key(monkeypatch):
-    """Bug #4 regression: No API key -> LLMAuthError immediately."""
+    """Missing API key raises LLMAuthError when env var is unset."""
     from knowsql.llm import create_provider
     from knowsql.config import LLMConfig
 
@@ -85,7 +85,8 @@ def test_create_provider_none_api_key_env():
     from knowsql.llm import create_provider
     from knowsql.config import LLMConfig
 
-    config = LLMConfig(provider="anthropic", api_key_env=None)
+    config = LLMConfig(provider="anthropic")
+    config.api_key_env = None  # bypass __post_init__ resolution
     with pytest.raises(LLMAuthError, match="No API key provided"):
         create_provider(config)
 
@@ -124,6 +125,18 @@ def test_create_provider_unknown_case_insensitive():
 
     config = LLMConfig(provider="Gemini", api_key="sk-test")
     with pytest.raises(ValueError, match="Unknown LLM provider"):
+        create_provider(config)
+
+
+def test_create_provider_none_provider():
+    """None provider raises ValueError before attribute access."""
+    from knowsql.llm import create_provider
+    from knowsql.config import LLMConfig
+
+    config = LLMConfig()
+    config.provider = None
+    config.api_key = "sk-test"
+    with pytest.raises(ValueError, match="LLM provider must be specified"):
         create_provider(config)
 
 

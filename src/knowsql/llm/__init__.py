@@ -11,18 +11,23 @@ def create_provider(config: LLMConfig) -> LLMProvider:
     """Create an LLM provider based on config."""
     # Resolve API key: direct key takes priority over env var
     api_key = config.api_key
-    if not api_key:
+    if api_key is None:
         if config.api_key_env is None:
             raise LLMAuthError(
-                "No API key provided and no api_key_env configured."
+                "No API key provided. Set api_key directly or configure api_key_env."
             )
         api_key = os.environ.get(config.api_key_env, "")
 
     if not api_key:
         raise LLMAuthError(
-            f"API key not found. Set the {config.api_key_env} environment variable."
+            f"API key not found. Set the {config.api_key_env} environment variable or provide api_key directly."
         )
 
+    if not config.provider:
+        raise ValueError("LLM provider must be specified.")
+
+    # Provider imports are deferred to avoid loading heavy SDK dependencies
+    # (anthropic, openai) when only one provider is needed.
     provider = config.provider.lower().strip()
 
     if provider == "anthropic":
