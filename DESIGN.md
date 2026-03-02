@@ -42,11 +42,11 @@ No vector databases. No RAG. The agent navigates a file hierarchy, reading progr
 ## Project Structure
 
 ```
-sql-schema-agent/
+knowsql/
   pyproject.toml
   README.md
   src/
-    sql_schema_agent/
+    knowsql/
       __init__.py
       cli.py                    # Click-based CLI entry point
       config.py                 # Configuration management
@@ -81,7 +81,7 @@ sql-schema-agent/
 
 ## Configuration
 
-Configuration via a YAML file (`~/.sql-schema-agent/config.yaml`) or environment variables, with CLI flags as overrides.
+Configuration via a YAML file (`~/.knowsql/config.yaml`) or environment variables, with CLI flags as overrides.
 
 ```yaml
 llm:
@@ -104,7 +104,7 @@ indexer_advanced:
   keyword_stopwords_override: null         # If set, replaces the default stopword list entirely
 ```
 
-Environment variable overrides follow the pattern `SQL_SCHEMA_AGENT_LLM_PROVIDER`, `SQL_SCHEMA_AGENT_LLM_MODEL`, etc.
+Environment variable overrides follow the pattern `KNOWSQL_LLM_PROVIDER`, `KNOWSQL_LLM_MODEL`, etc.
 
 ## CLI Interface
 
@@ -112,20 +112,20 @@ Built with Click.
 
 ```bash
 # Index a database
-sql-schema-agent index \
+knowsql index \
   --connection-string "postgresql://user:pass@localhost/mydb" \
   --output-dir ./schema_index \
   --provider anthropic \
   --model claude-sonnet-4-20250514
 
 # One-shot query
-sql-schema-agent query \
+knowsql query \
   --index-dir ./schema_index \
   --connection-string "postgresql://user:pass@localhost/mydb" \
   --question "How many customers signed up last month by region?"
 
 # Interactive REPL
-sql-schema-agent repl \
+knowsql repl \
   --index-dir ./schema_index \
   --connection-string "postgresql://user:pass@localhost/mydb"
 ```

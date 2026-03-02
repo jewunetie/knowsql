@@ -78,3 +78,58 @@ def test_create_provider_openai(monkeypatch):
     config = LLMConfig(provider="openai", api_key_env="OPENAI_API_KEY", model="gpt-4o")
     provider = create_provider(config)
     assert isinstance(provider, OpenAIProvider)
+
+
+def test_create_provider_none_api_key_env():
+    """api_key_env=None with no direct api_key -> LLMAuthError."""
+    from knowsql.llm import create_provider
+    from knowsql.config import LLMConfig
+
+    config = LLMConfig(provider="anthropic", api_key_env=None)
+    with pytest.raises(LLMAuthError, match="No API key provided"):
+        create_provider(config)
+
+
+def test_create_provider_direct_api_key(monkeypatch):
+    """Direct api_key bypasses env var lookup."""
+    from knowsql.llm import create_provider
+    from knowsql.llm.anthropic_provider import AnthropicProvider
+    from knowsql.config import LLMConfig
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    config = LLMConfig(provider="anthropic", api_key="sk-direct")
+    provider = create_provider(config)
+    assert isinstance(provider, AnthropicProvider)
+
+
+@pytest.mark.parametrize("provider_str,expected_type_name", [
+    ("OPENAI", "OpenAIProvider"),
+    (" Anthropic ", "AnthropicProvider"),
+    ("OpenAI", "OpenAIProvider"),
+])
+def test_create_provider_case_insensitive(monkeypatch, provider_str, expected_type_name):
+    """Provider name matching is case-insensitive and strips whitespace."""
+    from knowsql.llm import create_provider
+    from knowsql.config import LLMConfig
+
+    config = LLMConfig(provider=provider_str, api_key="sk-test")
+    provider = create_provider(config)
+    assert type(provider).__name__ == expected_type_name
+
+
+def test_create_provider_unknown_case_insensitive():
+    """Unknown provider raises ValueError even with valid key."""
+    from knowsql.llm import create_provider
+    from knowsql.config import LLMConfig
+
+    config = LLMConfig(provider="Gemini", api_key="sk-test")
+    with pytest.raises(ValueError, match="Unknown LLM provider"):
+        create_provider(config)
+
+
+def test_create_provider_malformed_config():
+    """Plain object missing .provider attribute -> AttributeError."""
+    from knowsql.llm import create_provider
+
+    with pytest.raises(AttributeError):
+        create_provider(object())

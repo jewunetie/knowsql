@@ -11,6 +11,7 @@ class LLMConfig:
     provider: str = "anthropic"
     model: str = "claude-sonnet-4-20250514"
     api_key_env: str = "ANTHROPIC_API_KEY"
+    api_key: str | None = None
 
 
 @dataclass
