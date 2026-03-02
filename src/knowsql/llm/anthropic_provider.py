@@ -66,6 +66,10 @@ class AnthropicProvider(LLMProvider):
             raise LLMAuthError(f"Anthropic authentication failed: {e}")
         except self._anthropic.RateLimitError as e:
             raise LLMRateLimitError(f"Rate limit exceeded: {e}")
+        except self._anthropic.BadRequestError as e:
+            if "context" in str(e).lower() or "token" in str(e).lower():
+                raise LLMContextError(f"Context window exceeded: {e}")
+            raise LLMError(f"Anthropic API error: {e}")
         except self._anthropic.APIError as e:
             raise LLMError(f"Anthropic API error: {e}")
 

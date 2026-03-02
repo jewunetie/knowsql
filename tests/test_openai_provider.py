@@ -7,7 +7,7 @@ import pytest
 
 from knowsql.llm.openai_provider import OpenAIProvider
 from knowsql.llm.provider import LLMMessage, ToolCall, ToolDefinition
-from knowsql.llm.errors import LLMError
+from knowsql.llm.errors import LLMAuthError, LLMRateLimitError, LLMContextError, LLMError
 
 
 @pytest.fixture
@@ -107,6 +107,23 @@ class TestParseResponse:
         resp = self._make_response(text="Just text", tool_calls=None)
         msg = provider._parse_response(resp)
         assert msg.tool_calls is None
+
+    def test_none_output(self, provider):
+        """Guard against response.output being None."""
+        resp = SimpleNamespace(output=None, output_text="Hello")
+        msg = provider._parse_response(resp)
+        assert msg.content == "Hello"
+        assert msg.tool_calls is None
+
+    def test_malformed_tool_arguments(self, provider):
+        """Malformed JSON in tool arguments raises LLMError."""
+        tc = SimpleNamespace(
+            type="function_call", call_id="tc_1",
+            name="read_file", arguments="not valid json {{{",
+        )
+        resp = SimpleNamespace(output=[tc], output_text="")
+        with pytest.raises(LLMError, match="Malformed tool arguments"):
+            provider._parse_response(resp)
 
 
 class TestCompleteJson:
@@ -266,3 +283,88 @@ class TestToolCallingLive:
         assert isinstance(result2, LLMMessage)
         assert result2.role == "assistant"
         assert len(result2.content) > 0
+
+
+class TestExceptionMapping:
+    """Test that SDK exceptions are mapped to the correct LLMError subtypes."""
+
+    @pytest.fixture
+    def mock_response(self):
+        """Minimal httpx.Response mock for SDK exception constructors."""
+        import httpx
+        return httpx.Response(status_code=400, request=httpx.Request("POST", "https://api.openai.com"))
+
+    def _raise_on_create(self, provider, monkeypatch, exc):
+        def raiser(**kwargs):
+            raise exc
+        monkeypatch.setattr(provider.client.responses, "create", raiser)
+
+    def test_auth_error_complete(self, provider, monkeypatch, mock_response):
+        import openai
+        self._raise_on_create(provider, monkeypatch,
+            openai.AuthenticationError("invalid api key", response=mock_response, body=None))
+        with pytest.raises(LLMAuthError, match="authentication failed"):
+            provider.complete([LLMMessage(role="user", content="hi")])
+
+    def test_auth_error_complete_json(self, provider, monkeypatch, mock_response):
+        import openai
+        self._raise_on_create(provider, monkeypatch,
+            openai.AuthenticationError("invalid api key", response=mock_response, body=None))
+        with pytest.raises(LLMAuthError, match="authentication failed"):
+            provider.complete_json([LLMMessage(role="user", content="hi")])
+
+    def test_rate_limit_complete(self, provider, monkeypatch, mock_response):
+        import openai
+        self._raise_on_create(provider, monkeypatch,
+            openai.RateLimitError("rate limit", response=mock_response, body=None))
+        with pytest.raises(LLMRateLimitError):
+            provider.complete([LLMMessage(role="user", content="hi")])
+
+    def test_rate_limit_complete_json(self, provider, monkeypatch, mock_response):
+        import openai
+        self._raise_on_create(provider, monkeypatch,
+            openai.RateLimitError("rate limit", response=mock_response, body=None))
+        with pytest.raises(LLMRateLimitError):
+            provider.complete_json([LLMMessage(role="user", content="hi")])
+
+    def test_bad_request_context_error(self, provider, monkeypatch, mock_response):
+        import openai
+        self._raise_on_create(provider, monkeypatch,
+            openai.BadRequestError("maximum context length exceeded with token count", response=mock_response, body=None))
+        with pytest.raises(LLMContextError, match="Context window exceeded"):
+            provider.complete([LLMMessage(role="user", content="hi")])
+
+    def test_bad_request_context_error_complete_json(self, provider, monkeypatch, mock_response):
+        import openai
+        self._raise_on_create(provider, monkeypatch,
+            openai.BadRequestError("token limit exceeded", response=mock_response, body=None))
+        with pytest.raises(LLMContextError, match="Context window exceeded"):
+            provider.complete_json([LLMMessage(role="user", content="hi")])
+
+    def test_bad_request_non_context(self, provider, monkeypatch, mock_response):
+        import openai
+        self._raise_on_create(provider, monkeypatch,
+            openai.BadRequestError("invalid parameter", response=mock_response, body=None))
+        with pytest.raises(LLMError, match="OpenAI API error"):
+            provider.complete([LLMMessage(role="user", content="hi")])
+
+    def test_bad_request_non_context_complete_json(self, provider, monkeypatch, mock_response):
+        import openai
+        self._raise_on_create(provider, monkeypatch,
+            openai.BadRequestError("invalid parameter", response=mock_response, body=None))
+        with pytest.raises(LLMError, match="OpenAI API error"):
+            provider.complete_json([LLMMessage(role="user", content="hi")])
+
+    def test_api_error_complete(self, provider, monkeypatch, mock_response):
+        import openai
+        self._raise_on_create(provider, monkeypatch,
+            openai.APIError("server error", request=mock_response.request, body=None))
+        with pytest.raises(LLMError, match="OpenAI API error"):
+            provider.complete([LLMMessage(role="user", content="hi")])
+
+    def test_api_error_complete_json(self, provider, monkeypatch, mock_response):
+        import openai
+        self._raise_on_create(provider, monkeypatch,
+            openai.APIError("server error", request=mock_response.request, body=None))
+        with pytest.raises(LLMError, match="OpenAI API error"):
+            provider.complete_json([LLMMessage(role="user", content="hi")])

@@ -86,7 +86,7 @@ Configuration via a YAML file (`~/.sql-schema-agent/config.yaml`) or environment
 ```yaml
 llm:
   provider: "anthropic"                    # "anthropic" or "openai"
-  model: "claude-sonnet-4-20250514"        # Model identifier
+  model: "claude-sonnet-4-20250514"        # Model identifier (OpenAI default: "gpt-5-mini")
   api_key_env: "ANTHROPIC_API_KEY"         # Env var name containing the API key
 
 indexer:
@@ -815,6 +815,8 @@ class LLMProvider(ABC):
 ```
 
 Both providers (Anthropic, OpenAI) implement this interface. The tool-use protocol differs between providers, so each implementation handles the translation internally.
+
+The Anthropic provider uses the Messages API (`messages.create`). The OpenAI provider uses the Responses API (`responses.create`), which represents tool calls as top-level `function_call` input items rather than nesting them inside assistant messages (see `_prepare_input()` in `openai_provider.py`).
 
 ## Dependencies
 

@@ -6,6 +6,7 @@ import pytest
 
 from knowsql.llm.anthropic_provider import AnthropicProvider
 from knowsql.llm.provider import LLMMessage, ToolCall, ToolDefinition
+from knowsql.llm.errors import LLMAuthError, LLMRateLimitError, LLMContextError, LLMError
 
 
 @pytest.fixture
@@ -283,3 +284,88 @@ class TestToolCallingLive:
         assert tc.name == "get_weather"
         assert isinstance(tc.arguments, dict)
         assert "city" in tc.arguments
+
+
+class TestExceptionMapping:
+    """Test that SDK exceptions are mapped to the correct LLMError subtypes."""
+
+    @pytest.fixture
+    def mock_response(self):
+        """Minimal httpx.Response mock for SDK exception constructors."""
+        import httpx
+        return httpx.Response(status_code=400, request=httpx.Request("POST", "https://api.anthropic.com"))
+
+    def _raise_on_create(self, provider, monkeypatch, exc):
+        def raiser(**kwargs):
+            raise exc
+        monkeypatch.setattr(provider.client.messages, "create", raiser)
+
+    def test_auth_error_complete(self, provider, monkeypatch, mock_response):
+        import anthropic
+        self._raise_on_create(provider, monkeypatch,
+            anthropic.AuthenticationError("invalid api key", response=mock_response, body=None))
+        with pytest.raises(LLMAuthError, match="authentication failed"):
+            provider.complete([LLMMessage(role="user", content="hi")])
+
+    def test_auth_error_complete_json(self, provider, monkeypatch, mock_response):
+        import anthropic
+        self._raise_on_create(provider, monkeypatch,
+            anthropic.AuthenticationError("invalid api key", response=mock_response, body=None))
+        with pytest.raises(LLMAuthError, match="authentication failed"):
+            provider.complete_json([LLMMessage(role="user", content="hi")])
+
+    def test_rate_limit_complete(self, provider, monkeypatch, mock_response):
+        import anthropic
+        self._raise_on_create(provider, monkeypatch,
+            anthropic.RateLimitError("rate limit", response=mock_response, body=None))
+        with pytest.raises(LLMRateLimitError):
+            provider.complete([LLMMessage(role="user", content="hi")])
+
+    def test_rate_limit_complete_json(self, provider, monkeypatch, mock_response):
+        import anthropic
+        self._raise_on_create(provider, monkeypatch,
+            anthropic.RateLimitError("rate limit", response=mock_response, body=None))
+        with pytest.raises(LLMRateLimitError):
+            provider.complete_json([LLMMessage(role="user", content="hi")])
+
+    def test_bad_request_context_error(self, provider, monkeypatch, mock_response):
+        import anthropic
+        self._raise_on_create(provider, monkeypatch,
+            anthropic.BadRequestError("maximum context length exceeded with token count", response=mock_response, body=None))
+        with pytest.raises(LLMContextError, match="Context window exceeded"):
+            provider.complete([LLMMessage(role="user", content="hi")])
+
+    def test_bad_request_context_error_complete_json(self, provider, monkeypatch, mock_response):
+        import anthropic
+        self._raise_on_create(provider, monkeypatch,
+            anthropic.BadRequestError("token limit exceeded", response=mock_response, body=None))
+        with pytest.raises(LLMContextError, match="Context window exceeded"):
+            provider.complete_json([LLMMessage(role="user", content="hi")])
+
+    def test_bad_request_non_context(self, provider, monkeypatch, mock_response):
+        import anthropic
+        self._raise_on_create(provider, monkeypatch,
+            anthropic.BadRequestError("invalid parameter", response=mock_response, body=None))
+        with pytest.raises(LLMError, match="Anthropic API error"):
+            provider.complete([LLMMessage(role="user", content="hi")])
+
+    def test_bad_request_non_context_complete_json(self, provider, monkeypatch, mock_response):
+        import anthropic
+        self._raise_on_create(provider, monkeypatch,
+            anthropic.BadRequestError("invalid parameter", response=mock_response, body=None))
+        with pytest.raises(LLMError, match="Anthropic API error"):
+            provider.complete_json([LLMMessage(role="user", content="hi")])
+
+    def test_api_error_complete(self, provider, monkeypatch, mock_response):
+        import anthropic
+        self._raise_on_create(provider, monkeypatch,
+            anthropic.APIError("server error", request=mock_response.request, body=None))
+        with pytest.raises(LLMError, match="Anthropic API error"):
+            provider.complete([LLMMessage(role="user", content="hi")])
+
+    def test_api_error_complete_json(self, provider, monkeypatch, mock_response):
+        import anthropic
+        self._raise_on_create(provider, monkeypatch,
+            anthropic.APIError("server error", request=mock_response.request, body=None))
+        with pytest.raises(LLMError, match="Anthropic API error"):
+            provider.complete_json([LLMMessage(role="user", content="hi")])

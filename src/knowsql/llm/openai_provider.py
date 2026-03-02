@@ -64,6 +64,10 @@ class OpenAIProvider(LLMProvider):
             raise LLMAuthError(f"OpenAI authentication failed: {e}")
         except self._openai.RateLimitError as e:
             raise LLMRateLimitError(f"Rate limit exceeded: {e}")
+        except self._openai.BadRequestError as e:
+            if "context" in str(e).lower() or "token" in str(e).lower():
+                raise LLMContextError(f"Context window exceeded: {e}")
+            raise LLMError(f"OpenAI API error: {e}")
         except self._openai.APIError as e:
             raise LLMError(f"OpenAI API error: {e}")
 
@@ -78,13 +82,23 @@ class OpenAIProvider(LLMProvider):
 
         Returns (input_items, instructions) where instructions is extracted
         from system messages (or None if no system messages).
+
+        Note: The Responses API requires tool calls as top-level
+        ``{"type": "function_call"}`` input items, not nested inside an
+        assistant message.  Assistant text (if any) is emitted as a
+        separate ``{"role": "assistant"}`` item preceding the function_call
+        items.  This flat layout is mandated by the ``responses.create``
+        endpoint schema.
         """
         input_items = []
         instructions = None
 
         for msg in messages:
             if msg.role == "system":
-                instructions = msg.content
+                if instructions is None:
+                    instructions = msg.content
+                else:
+                    instructions += "\n" + msg.content
             elif msg.role == "tool":
                 input_items.append({
                     "type": "function_call_output",
@@ -124,13 +138,16 @@ class OpenAIProvider(LLMProvider):
     def _parse_response(self, response) -> LLMMessage:
         tool_calls = None
 
-        fc_items = [item for item in response.output if item.type == "function_call"]
+        fc_items = [item for item in (response.output or []) if item.type == "function_call"]
         if fc_items:
             tool_calls = []
             for item in fc_items:
                 args = item.arguments
                 if isinstance(args, str):
-                    args = json.loads(args)
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        raise LLMError(f"Malformed tool arguments from OpenAI: {args[:200]}")
                 tool_calls.append(ToolCall(
                     id=item.call_id,
                     name=item.name,
