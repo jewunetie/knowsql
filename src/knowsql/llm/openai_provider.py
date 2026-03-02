@@ -1,4 +1,4 @@
-"""OpenAI LLM provider."""
+"""OpenAI LLM provider (Responses API)."""
 
 import json
 import logging
@@ -17,19 +17,21 @@ class OpenAIProvider(LLMProvider):
         self.client = openai.OpenAI(api_key=api_key)
 
     def complete(self, messages, tools=None, temperature=None):
-        api_messages = self._prepare_messages(messages)
+        input_items, instructions = self._prepare_input(messages)
 
         kwargs = {
             "model": self.model,
-            "messages": api_messages,
+            "input": input_items,
         }
+        if instructions:
+            kwargs["instructions"] = instructions
         if temperature is not None:
             kwargs["temperature"] = temperature
         if tools:
             kwargs["tools"] = [self._convert_tool(t) for t in tools]
 
         try:
-            response = self.client.chat.completions.create(**kwargs)
+            response = self.client.responses.create(**kwargs)
         except self._openai.AuthenticationError as e:
             raise LLMAuthError(f"OpenAI authentication failed. Check your API key: {e}")
         except self._openai.RateLimitError as e:
@@ -44,18 +46,20 @@ class OpenAIProvider(LLMProvider):
         return self._parse_response(response)
 
     def complete_json(self, messages, temperature=None):
-        api_messages = self._prepare_messages(messages)
+        input_items, instructions = self._prepare_input(messages)
 
         kwargs = {
             "model": self.model,
-            "messages": api_messages,
-            "response_format": {"type": "json_object"},
+            "input": input_items,
+            "text": {"format": {"type": "json_object"}},
         }
+        if instructions:
+            kwargs["instructions"] = instructions
         if temperature is not None:
             kwargs["temperature"] = temperature
 
         try:
-            response = self.client.chat.completions.create(**kwargs)
+            response = self.client.responses.create(**kwargs)
         except self._openai.AuthenticationError as e:
             raise LLMAuthError(f"OpenAI authentication failed: {e}")
         except self._openai.RateLimitError as e:
@@ -63,72 +67,78 @@ class OpenAIProvider(LLMProvider):
         except self._openai.APIError as e:
             raise LLMError(f"OpenAI API error: {e}")
 
-        text = response.choices[0].message.content or "{}"
+        text = response.output_text or "{}"
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             raise LLMError(f"Failed to parse JSON response from OpenAI: {text[:200]}")
 
-    def _prepare_messages(self, messages: list[LLMMessage]) -> list[dict]:
-        api_messages = []
+    def _prepare_input(self, messages: list[LLMMessage]) -> tuple[list[dict], str | None]:
+        """Convert LLMMessages to Responses API input items + instructions.
+
+        Returns (input_items, instructions) where instructions is extracted
+        from system messages (or None if no system messages).
+        """
+        input_items = []
+        instructions = None
+
         for msg in messages:
-            if msg.role == "tool":
-                api_messages.append({
-                    "role": "tool",
-                    "tool_call_id": msg.tool_call_id,
-                    "content": msg.content,
+            if msg.role == "system":
+                instructions = msg.content
+            elif msg.role == "tool":
+                input_items.append({
+                    "type": "function_call_output",
+                    "call_id": msg.tool_call_id,
+                    "output": msg.content,
                 })
             elif msg.role == "assistant" and msg.tool_calls:
-                tool_calls = []
-                for tc in msg.tool_calls:
-                    tool_calls.append({
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments),
-                        },
+                if msg.content:
+                    input_items.append({
+                        "role": "assistant",
+                        "content": msg.content,
                     })
-                api_messages.append({
-                    "role": "assistant",
-                    "content": msg.content or None,
-                    "tool_calls": tool_calls,
-                })
+                for tc in msg.tool_calls:
+                    input_items.append({
+                        "type": "function_call",
+                        "call_id": tc.id,
+                        "name": tc.name,
+                        "arguments": json.dumps(tc.arguments),
+                    })
             else:
-                api_messages.append({
+                input_items.append({
                     "role": msg.role,
                     "content": msg.content,
                 })
-        return api_messages
+
+        return input_items, instructions
 
     def _convert_tool(self, tool: ToolDefinition) -> dict:
         return {
             "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.parameters,
-            },
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.parameters,
+            "strict": False,
         }
 
     def _parse_response(self, response) -> LLMMessage:
-        choice = response.choices[0].message
         tool_calls = None
 
-        if choice.tool_calls:
+        fc_items = [item for item in response.output if item.type == "function_call"]
+        if fc_items:
             tool_calls = []
-            for tc in choice.tool_calls:
-                args = tc.function.arguments
+            for item in fc_items:
+                args = item.arguments
                 if isinstance(args, str):
                     args = json.loads(args)
                 tool_calls.append(ToolCall(
-                    id=tc.id,
-                    name=tc.function.name,
+                    id=item.call_id,
+                    name=item.name,
                     arguments=args,
                 ))
 
         return LLMMessage(
             role="assistant",
-            content=choice.content or "",
+            content=response.output_text or "",
             tool_calls=tool_calls,
         )

@@ -15,18 +15,19 @@ def provider():
     return OpenAIProvider(api_key="sk-test-dummy", model="gpt-test")
 
 
-class TestPrepareMessages:
+class TestPrepareInput:
     def test_system(self, provider):
         msgs = [LLMMessage(role="system", content="Be helpful")]
-        result = provider._prepare_messages(msgs)
-        assert result[0] == {"role": "system", "content": "Be helpful"}
+        input_items, instructions = provider._prepare_input(msgs)
+        assert instructions == "Be helpful"
+        assert len(input_items) == 0
 
     def test_tool_result(self, provider):
         msgs = [LLMMessage(role="tool", content="result data", tool_call_id="tc_1")]
-        result = provider._prepare_messages(msgs)
-        assert result[0]["role"] == "tool"
-        assert result[0]["tool_call_id"] == "tc_1"
-        assert result[0]["content"] == "result data"
+        input_items, _ = provider._prepare_input(msgs)
+        assert input_items[0]["type"] == "function_call_output"
+        assert input_items[0]["call_id"] == "tc_1"
+        assert input_items[0]["output"] == "result data"
 
     def test_assistant_with_tools(self, provider):
         msgs = [
@@ -36,12 +37,25 @@ class TestPrepareMessages:
                 tool_calls=[ToolCall(id="tc_1", name="fn", arguments={"x": 1})],
             ),
         ]
-        result = provider._prepare_messages(msgs)
-        assert result[0]["role"] == "assistant"
-        tc = result[0]["tool_calls"][0]
-        assert tc["id"] == "tc_1"
-        assert tc["type"] == "function"
-        assert json.loads(tc["function"]["arguments"]) == {"x": 1}
+        input_items, _ = provider._prepare_input(msgs)
+        fc = input_items[0]
+        assert fc["type"] == "function_call"
+        assert fc["call_id"] == "tc_1"
+        assert fc["name"] == "fn"
+        assert json.loads(fc["arguments"]) == {"x": 1}
+
+    def test_assistant_with_content_and_tools(self, provider):
+        msgs = [
+            LLMMessage(
+                role="assistant",
+                content="Thinking...",
+                tool_calls=[ToolCall(id="tc_1", name="fn", arguments={"x": 1})],
+            ),
+        ]
+        input_items, _ = provider._prepare_input(msgs)
+        assert input_items[0] == {"role": "assistant", "content": "Thinking..."}
+        assert input_items[1]["type"] == "function_call"
+        assert input_items[1]["call_id"] == "tc_1"
 
 
 class TestConvertTool:
@@ -53,17 +67,26 @@ class TestConvertTool:
         )
         result = provider._convert_tool(tool)
         assert result["type"] == "function"
-        assert result["function"]["name"] == "read_file"
-        assert result["function"]["parameters"] == tool.parameters
+        assert result["name"] == "read_file"
+        assert result["description"] == "Read a file"
+        assert result["parameters"] == tool.parameters
+        assert result["strict"] is False
 
 
 class TestParseResponse:
-    def _make_response(self, content="Hello", tool_calls=None):
-        msg = SimpleNamespace(content=content, tool_calls=tool_calls)
-        return SimpleNamespace(choices=[SimpleNamespace(message=msg)])
+    def _make_response(self, text="Hello", tool_calls=None):
+        output = []
+        if text:
+            output.append(SimpleNamespace(
+                type="message", role="assistant",
+                content=[SimpleNamespace(type="output_text", text=text)],
+            ))
+        if tool_calls:
+            output.extend(tool_calls)
+        return SimpleNamespace(output=output, output_text=text or "")
 
     def test_text(self, provider):
-        resp = self._make_response(content="Hello world")
+        resp = self._make_response(text="Hello world")
         msg = provider._parse_response(resp)
         assert msg.role == "assistant"
         assert msg.content == "Hello world"
@@ -71,49 +94,43 @@ class TestParseResponse:
 
     def test_tool_calls(self, provider):
         tc = SimpleNamespace(
-            id="tc_1",
-            function=SimpleNamespace(name="read_file", arguments='{"path": "INDEX.md"}'),
+            type="function_call", call_id="tc_1",
+            name="read_file", arguments='{"path": "INDEX.md"}',
         )
-        resp = self._make_response(content=None, tool_calls=[tc])
+        resp = self._make_response(text=None, tool_calls=[tc])
         msg = provider._parse_response(resp)
         assert msg.tool_calls is not None
         assert msg.tool_calls[0].name == "read_file"
         assert msg.tool_calls[0].arguments == {"path": "INDEX.md"}
 
     def test_no_tool_calls(self, provider):
-        resp = self._make_response(content="Just text", tool_calls=None)
+        resp = self._make_response(text="Just text", tool_calls=None)
         msg = provider._parse_response(resp)
         assert msg.tool_calls is None
 
 
 class TestCompleteJson:
     def test_valid(self, provider, monkeypatch):
-        mock_resp = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content='{"result": 42}'))]
-        )
+        mock_resp = SimpleNamespace(output=[], output_text='{"result": 42}')
         monkeypatch.setattr(
-            provider.client.chat.completions, "create", lambda **kwargs: mock_resp
+            provider.client.responses, "create", lambda **kwargs: mock_resp
         )
         result = provider.complete_json([LLMMessage(role="user", content="Return JSON")])
         assert result == {"result": 42}
 
     def test_invalid(self, provider, monkeypatch):
         """Bug #3 regression: Invalid JSON -> LLMError."""
-        mock_resp = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="not valid json {{{"))]
-        )
+        mock_resp = SimpleNamespace(output=[], output_text="not valid json {{{")
         monkeypatch.setattr(
-            provider.client.chat.completions, "create", lambda **kwargs: mock_resp
+            provider.client.responses, "create", lambda **kwargs: mock_resp
         )
         with pytest.raises(LLMError, match="Failed to parse JSON"):
             provider.complete_json([LLMMessage(role="user", content="Return JSON")])
 
     def test_empty_response(self, provider, monkeypatch):
-        mock_resp = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=None))]
-        )
+        mock_resp = SimpleNamespace(output=[], output_text=None)
         monkeypatch.setattr(
-            provider.client.chat.completions, "create", lambda **kwargs: mock_resp
+            provider.client.responses, "create", lambda **kwargs: mock_resp
         )
         # None content defaults to "{}" which parses to empty dict
         result = provider.complete_json([LLMMessage(role="user", content="Return JSON")])
@@ -129,11 +146,13 @@ class TestCompleteTextLive:
         if llm_backend == "openai":
             return openai_live_provider
         mock_resp = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(
-                content="Hello", tool_calls=None
-            ))]
+            output=[SimpleNamespace(
+                type="message", role="assistant",
+                content=[SimpleNamespace(type="output_text", text="Hello")],
+            )],
+            output_text="Hello",
         )
-        monkeypatch.setattr(provider.client.chat.completions, "create", lambda **kw: mock_resp)
+        monkeypatch.setattr(provider.client.responses, "create", lambda **kw: mock_resp)
         return provider
 
     def test_text_response(self, active_provider):
@@ -161,11 +180,9 @@ class TestCompleteJsonLive:
         if llm_backend == "openai":
             return openai_live_provider
         mock_resp = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(
-                content='{"name": "test", "count": 5}'
-            ))]
+            output=[], output_text='{"name": "test", "count": 5}',
         )
-        monkeypatch.setattr(provider.client.chat.completions, "create", lambda **kw: mock_resp)
+        monkeypatch.setattr(provider.client.responses, "create", lambda **kw: mock_resp)
         return provider
 
     def test_json_response(self, active_provider):
@@ -194,12 +211,13 @@ class TestToolCallingLive:
         if llm_backend == "openai":
             return openai_live_provider
         tc = SimpleNamespace(
-            id="tc_mock", function=SimpleNamespace(name="get_weather", arguments='{"city": "Paris"}')
+            type="function_call", call_id="tc_mock",
+            name="get_weather", arguments='{"city": "Paris"}',
         )
         mock_resp = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[tc]))]
+            output=[tc], output_text="",
         )
-        monkeypatch.setattr(provider.client.chat.completions, "create", lambda **kw: mock_resp)
+        monkeypatch.setattr(provider.client.responses, "create", lambda **kw: mock_resp)
         return provider
 
     def test_tool_call(self, active_provider):
@@ -228,11 +246,13 @@ class TestToolCallingLive:
         # Step 2: provide tool result, get final answer
         if llm_backend != "openai":
             mock_resp2 = SimpleNamespace(
-                choices=[SimpleNamespace(message=SimpleNamespace(
-                    content="The weather in Paris is sunny.", tool_calls=None
-                ))]
+                output=[SimpleNamespace(
+                    type="message", role="assistant",
+                    content=[SimpleNamespace(type="output_text", text="The weather in Paris is sunny.")],
+                )],
+                output_text="The weather in Paris is sunny.",
             )
-            monkeypatch.setattr(provider.client.chat.completions, "create", lambda **kw: mock_resp2)
+            monkeypatch.setattr(provider.client.responses, "create", lambda **kw: mock_resp2)
             active = provider
         else:
             active = active_provider
