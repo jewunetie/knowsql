@@ -14,16 +14,22 @@ def create_provider(config: LLMConfig) -> LLMProvider:
     if api_key is None:
         if config.api_key_env is None:
             raise LLMAuthError(
-                "No API key provided. Set api_key directly or configure api_key_env."
+                "API key missing. Provide api_key directly or configure api_key_env."
             )
         api_key = os.environ.get(config.api_key_env, "")
 
-    if not api_key:
+    if not api_key.strip():
+        if config.api_key_env:
+            raise LLMAuthError(
+                f"API key missing. Set the {config.api_key_env} environment variable or provide api_key directly."
+            )
         raise LLMAuthError(
-            f"API key not found. Set the {config.api_key_env} environment variable or provide api_key directly."
+            "API key missing. Provide api_key directly or configure api_key_env."
         )
 
-    if not config.provider:
+    api_key = api_key.strip()
+
+    if not config.provider or not config.provider.strip():
         raise ValueError("LLM provider must be specified.")
 
     # Provider imports are deferred to avoid loading heavy SDK dependencies

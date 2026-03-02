@@ -118,6 +118,38 @@ def test_missing_yaml_file(tmp_path, monkeypatch):
     assert config.llm.provider == "anthropic"
 
 
+def test_yaml_provider_resolves_api_key_env(tmp_path, monkeypatch):
+    """YAML provider override also resolves api_key_env and model."""
+    config_dir = tmp_path / ".knowsql"
+    config_dir.mkdir()
+    config_file = config_dir / "config.yaml"
+    config_file.write_text(yaml.dump({"llm": {"provider": "openai"}}))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    config = load_config()
+    assert config.llm.api_key_env == "OPENAI_API_KEY"
+    assert config.llm.model == "gpt-5-mini"
+
+
+def test_env_provider_resolves_api_key_env(tmp_path, monkeypatch):
+    """Env var provider override also resolves api_key_env and model."""
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    monkeypatch.setenv("KNOWSQL_LLM_PROVIDER", "openai")
+    config = load_config()
+    assert config.llm.api_key_env == "OPENAI_API_KEY"
+    assert config.llm.model == "gpt-5-mini"
+
+
+def test_yaml_explicit_api_key_env_preserved(tmp_path, monkeypatch):
+    """Explicit api_key_env in YAML is not overridden by provider resolution."""
+    config_dir = tmp_path / ".knowsql"
+    config_dir.mkdir()
+    config_file = config_dir / "config.yaml"
+    config_file.write_text(yaml.dump({"llm": {"provider": "openai", "api_key_env": "MY_CUSTOM_KEY"}}))
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    config = load_config()
+    assert config.llm.api_key_env == "MY_CUSTOM_KEY"
+
+
 def test_config_dir_created(tmp_path, monkeypatch):
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     config = load_config()

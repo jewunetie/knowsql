@@ -33,7 +33,7 @@ def test_create_provider_missing_key(monkeypatch):
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     config = LLMConfig(provider="anthropic", api_key_env="ANTHROPIC_API_KEY")
-    with pytest.raises(LLMAuthError, match="API key not found"):
+    with pytest.raises(LLMAuthError, match="API key missing"):
         create_provider(config)
 
 
@@ -44,7 +44,7 @@ def test_create_provider_empty_key(monkeypatch):
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
     config = LLMConfig(provider="anthropic", api_key_env="ANTHROPIC_API_KEY")
-    with pytest.raises(LLMAuthError, match="API key not found"):
+    with pytest.raises(LLMAuthError, match="API key missing"):
         create_provider(config)
 
 
@@ -87,7 +87,7 @@ def test_create_provider_none_api_key_env():
 
     config = LLMConfig(provider="anthropic")
     config.api_key_env = None  # bypass __post_init__ resolution
-    with pytest.raises(LLMAuthError, match="No API key provided"):
+    with pytest.raises(LLMAuthError, match="API key missing"):
         create_provider(config)
 
 
@@ -135,6 +135,30 @@ def test_create_provider_none_provider():
 
     config = LLMConfig()
     config.provider = None
+    config.api_key = "sk-test"
+    with pytest.raises(ValueError, match="LLM provider must be specified"):
+        create_provider(config)
+
+
+@pytest.mark.parametrize("whitespace_key", ["   ", "\t", "\n"])
+def test_create_provider_whitespace_key(whitespace_key):
+    """Whitespace-only API key raises LLMAuthError."""
+    from knowsql.llm import create_provider
+    from knowsql.config import LLMConfig
+
+    config = LLMConfig(provider="anthropic", api_key=whitespace_key)
+    with pytest.raises(LLMAuthError, match="API key missing"):
+        create_provider(config)
+
+
+@pytest.mark.parametrize("whitespace_provider", ["   ", "\t", "\n"])
+def test_create_provider_whitespace_provider(whitespace_provider):
+    """Whitespace-only provider raises ValueError."""
+    from knowsql.llm import create_provider
+    from knowsql.config import LLMConfig
+
+    config = LLMConfig()
+    config.provider = whitespace_provider
     config.api_key = "sk-test"
     with pytest.raises(ValueError, match="LLM provider must be specified"):
         create_provider(config)

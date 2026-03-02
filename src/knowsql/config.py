@@ -10,6 +10,11 @@ _PROVIDER_KEY_ENV: dict[str, str] = {
     "openai": "OPENAI_API_KEY",
 }
 
+_PROVIDER_DEFAULT_MODEL: dict[str, str] = {
+    "anthropic": "claude-sonnet-4-20250514",
+    "openai": "gpt-5-mini",
+}
+
 
 @dataclass
 class LLMConfig:
@@ -19,7 +24,7 @@ class LLMConfig:
     api_key: str | None = None
 
     def __post_init__(self):
-        if self.api_key_env is None:
+        if self.api_key_env is None and self.provider:
             self.api_key_env = _PROVIDER_KEY_ENV.get(
                 self.provider, f"{self.provider.upper()}_API_KEY"
             )
@@ -68,6 +73,7 @@ def load_config(
     load_dotenv()
 
     config = KnowSQLConfig()
+    llm_overrides: set[str] = set()
 
     # Read YAML config
     config_dir = Path.home() / ".knowsql"
@@ -80,6 +86,7 @@ def load_config(
             for k, v in data["llm"].items():
                 if hasattr(config.llm, k):
                     setattr(config.llm, k, v)
+                    llm_overrides.add(k)
         if "indexer" in data:
             for k, v in data["indexer"].items():
                 if hasattr(config.indexer, k):
@@ -115,14 +122,12 @@ def load_config(
             elif isinstance(current, int):
                 val = int(val)
             setattr(section_obj, attr, val)
+            if section == "llm":
+                llm_overrides.add(attr)
 
     # CLI flag overrides
     if provider:
         config.llm.provider = provider
-        if provider == "openai":
-            config.llm.api_key_env = "OPENAI_API_KEY"
-            if not model:
-                config.llm.model = "gpt-5-mini"
     if model:
         config.llm.model = model
     if output_dir:
@@ -131,6 +136,16 @@ def load_config(
         config.agent.index_dir = index_dir
     if sample_mode:
         config.indexer.sample_mode = sample_mode
+
+    # Final resolution: sync api_key_env and model with provider
+    if "api_key_env" not in llm_overrides and config.llm.provider:
+        config.llm.api_key_env = _PROVIDER_KEY_ENV.get(
+            config.llm.provider, f"{config.llm.provider.upper()}_API_KEY"
+        )
+    if "model" not in llm_overrides and not model:
+        default_model = _PROVIDER_DEFAULT_MODEL.get(config.llm.provider)
+        if default_model:
+            config.llm.model = default_model
 
     # Ensure config dir exists
     config_dir.mkdir(parents=True, exist_ok=True)
